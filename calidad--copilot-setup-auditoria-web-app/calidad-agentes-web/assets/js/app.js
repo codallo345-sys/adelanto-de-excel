@@ -422,6 +422,17 @@ const App = {
       filterTeamMonthly.addEventListener('change', () => this.loadMonthlyMetrics());
     }
 
+    // Connection hours filters
+    const filterMonthConnectionHours = document.getElementById('filterMonthConnectionHours');
+    if (filterMonthConnectionHours) {
+      filterMonthConnectionHours.addEventListener('change', () => this.loadConnectionHours());
+    }
+
+    const filterTeamConnectionHours = document.getElementById('filterTeamConnectionHours');
+    if (filterTeamConnectionHours) {
+      filterTeamConnectionHours.addEventListener('change', () => this.loadConnectionHours());
+    }
+
     // Team quality selector for dashboard
     const teamQualitySelector = document.getElementById('teamQualitySelector');
     if (teamQualitySelector) {
@@ -467,6 +478,12 @@ const App = {
         e.preventDefault();
         e.stopImmediatePropagation();
         this.openExcelImportModal();
+      }
+      // Connection hours import button
+      if (e.target && e.target.closest('#importConnectionHoursBtn')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.openConnectionHoursImportModal();
       }
       if (e.target && e.target.closest('#dangerClearDataBtn')) {
         e.preventDefault();
@@ -876,6 +893,11 @@ const App = {
       case 'metrics-monthly':
         document.getElementById('metricsMonthlyView').classList.remove('hidden');
         this.loadMonthlyMetrics();
+        break;
+      case 'connection-hours':
+        document.getElementById('connectionHoursView').classList.remove('hidden');
+        this.initializeConnectionHoursFilters();
+        this.loadConnectionHours();
         break;
     }
   },
@@ -4474,6 +4496,586 @@ const App = {
       // Focus on the textarea
       const textarea = obsField.querySelector('textarea');
       if (textarea) textarea.focus();
+    }
+  },
+
+  // Connection Hours functionality
+  initializeConnectionHoursFilters() {
+    const teams = DataManager.getAllTeams();
+    const userTeam = DataManager.getUserTeam();
+    const isEditor = DataManager.isEditor();
+    
+    // Populate team filter
+    const filterTeamConnectionHours = document.getElementById('filterTeamConnectionHours');
+    if (filterTeamConnectionHours) {
+      // Clear existing options except the first one
+      while (filterTeamConnectionHours.options.length > 1) {
+        filterTeamConnectionHours.remove(1);
+      }
+      
+      Object.values(teams).forEach(team => {
+        const option = document.createElement('option');
+        option.value = team.id;
+        option.textContent = team.name;
+        filterTeamConnectionHours.appendChild(option);
+      });
+
+      // For non-editors, restrict to their team
+      if (!isEditor && userTeam) {
+        filterTeamConnectionHours.value = userTeam;
+        filterTeamConnectionHours.disabled = true;
+      }
+    }
+  },
+
+  openConnectionHoursImportModal() {
+    const filterMonthConnectionHours = document.getElementById('filterMonthConnectionHours');
+    const selectedMonth = filterMonthConnectionHours ? filterMonthConnectionHours.value : '';
+    const selectedTeam = document.getElementById('filterTeamConnectionHours') ? document.getElementById('filterTeamConnectionHours').value : '';
+    const selectedTeamLabel = document.getElementById('filterTeamConnectionHours') ? document.getElementById('filterTeamConnectionHours').selectedOptions[0].textContent : '';
+    
+    if (selectedMonth === '') {
+      alert('Seleccione primero el mes y luego abra el modal de importación.');
+      return;
+    }
+
+    if (selectedTeam === '') {
+      alert('Seleccione el equipo destino antes de importar las horas de conexión.');
+      return;
+    }
+
+    const currentYear = new Date().getFullYear();
+    const monthIndex = parseInt(selectedMonth);
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const weeks = DataManager.getWeekConfig(currentYear, monthIndex) || [];
+
+    if (!weeks.length) {
+      alert('No hay semanas configuradas para este mes. Configure las semanas antes de importar.');
+      return;
+    }
+
+    const weekSelect = document.getElementById('connectionHoursWeekSelect');
+    if (weekSelect) {
+      weekSelect.innerHTML = weeks.map((week, idx) => `<option value="${idx}">Semana ${idx + 1}: ${week.startDate} al ${week.endDate}</option>`).join('');
+    }
+
+    const monthInput = document.getElementById('connectionHoursSelectedMonth');
+    if (monthInput) {
+      monthInput.value = `${monthNames[monthIndex]} ${currentYear}`;
+    }
+
+    const teamInput = document.getElementById('connectionHoursSelectedTeam');
+    if (teamInput) {
+      teamInput.value = selectedTeam ? selectedTeamLabel : 'Seleccione un equipo en la vista';
+    }
+
+    const modal = document.getElementById('connectionHoursImportModal');
+    modal.style.display = 'flex';
+    document.getElementById('connectionHoursPasteArea').value = '';
+    
+    // Close on backdrop click
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        this.closeConnectionHoursImportModal();
+      }
+    };
+  },
+
+  closeConnectionHoursImportModal() {
+    const modal = document.getElementById('connectionHoursImportModal');
+    modal.style.display = 'none';
+  },
+
+  importConnectionHours() {
+    const pasteArea = document.getElementById('connectionHoursPasteArea');
+    const data = pasteArea.value.trim();
+    
+    if (!data) {
+      alert('Por favor pegue los datos antes de importar.');
+      return;
+    }
+
+    const selectedMonth = document.getElementById('filterMonthConnectionHours').value;
+    const selectedTeam = document.getElementById('filterTeamConnectionHours').value;
+    const selectedWeek = document.getElementById('connectionHoursWeekSelect') ? document.getElementById('connectionHoursWeekSelect').value : '';
+    
+    if (selectedMonth === '') {
+      alert('Por favor seleccione un mes antes de importar.');
+      return;
+    }
+
+    if (selectedWeek === '') {
+      alert('Por favor seleccione la semana destino antes de importar.');
+      return;
+    }
+
+    if (selectedTeam === '') {
+      alert('Por favor seleccione el equipo destino antes de importar.');
+      return;
+    }
+
+    const lines = data.split('\n');
+    if (lines.length < 2) {
+      alert('Los datos parecen estar vacíos o mal formateados.');
+      return;
+    }
+
+    // Get week configuration to know the dates
+    const currentYear = new Date().getFullYear();
+    const monthIndex = parseInt(selectedMonth);
+    const weekIndex = parseInt(selectedWeek);
+    const weeks = DataManager.getWeekConfig(currentYear, monthIndex);
+    const week = weeks[weekIndex];
+    
+    if (!week) {
+      alert('No se encontró la configuración de la semana seleccionada.');
+      return;
+    }
+
+    // Calculate dates for this week
+    const weekDates = [];
+    const startDate = new Date(week.startDate);
+    const endDate = new Date(week.endDate);
+    const current = new Date(startDate);
+    while (current <= endDate) {
+      weekDates.push(new Date(current));
+      current.setDate(current.getDate() + 1);
+    }
+
+    const teams = DataManager.getAllTeams();
+    const team = teams[selectedTeam];
+    const teamMemberNames = team && team.members 
+      ? team.members.filter(m => m.role !== 'supervisor' && m.role !== 'analista' && m.role !== 'calidad').map(m => m.name) 
+      : [];
+
+    // Parse the spreadsheet format:
+    // First row contains header with days
+    // Subsequent rows: Agent Name | Day1Hours | Day2Hours | ... | DaysWorked | ExpectedHours | ActualHours | ...
+    
+    let imported = 0;
+    const agentData = {};
+    
+    // Skip header rows (usually 2-3 rows of headers)
+    let dataStartIndex = 0;
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const line = lines[i].toLowerCase();
+      if (line.includes('nombre del agente') || line.includes('lunes') || line.includes('semana')) {
+        dataStartIndex = i + 1;
+      }
+    }
+    
+    // Process data lines
+    for (let i = dataStartIndex; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      const values = line.split('\t');
+      if (values.length < 2) continue;
+      
+      // First column should be agent name
+      let agentName = values[0]
+        .replace(/&nbsp;/g, ' ')
+        .replace(/[^A-Za-zÁÉÍÓÚÜáéíóúüÑñ\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Skip if not a valid agent name
+      if (!agentName || agentName.length < 3) continue;
+      
+      // Check if agent exists in team (or accept all if format looks right)
+      const isTeamMember = teamMemberNames.includes(agentName);
+      
+      // Skip rows that look like headers or summaries
+      if (agentName.toLowerCase().includes('semana') || 
+          agentName.toLowerCase().includes('nombre') ||
+          agentName.toLowerCase().includes('total')) {
+        continue;
+      }
+      
+      // If not in team members, try to find a partial match
+      if (!isTeamMember) {
+        const matchedMember = teamMemberNames.find(m => 
+          m.toLowerCase().includes(agentName.toLowerCase()) || 
+          agentName.toLowerCase().includes(m.toLowerCase())
+        );
+        if (matchedMember) {
+          agentName = matchedMember;
+        } else {
+          continue; // Skip non-team members
+        }
+      }
+      
+      // Parse daily hours (columns 1-7 typically represent Mon-Sun or the 7 days of the week)
+      const days = {};
+      for (let j = 1; j <= Math.min(7, values.length - 1); j++) {
+        const dayValue = values[j].trim();
+        if (!dayValue) continue;
+        
+        // Get the corresponding date for this day
+        const dateIndex = j - 1;
+        if (dateIndex >= weekDates.length) break;
+        
+        const dateStr = weekDates[dateIndex].toISOString().split('T')[0];
+        
+        // Determine the status/hours
+        const upperValue = dayValue.toUpperCase();
+        if (upperValue === 'LIBRE' || upperValue === '-') {
+          days[dateStr] = { hours: 'Libre', status: 'libre' };
+        } else if (upperValue === 'VACACIONES') {
+          days[dateStr] = { hours: 'VACACIONES', status: 'vacaciones' };
+        } else if (upperValue === 'CAMBIO') {
+          days[dateStr] = { hours: 'CAMBIO', status: 'cambio' };
+        } else if (upperValue === 'GUARDIA') {
+          days[dateStr] = { hours: 'GUARDIA', status: 'guardia' };
+        } else if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(dayValue)) {
+          // Parse time format H:MM:SS or H:MM
+          let hours = dayValue;
+          if (dayValue.split(':').length === 2) {
+            hours = dayValue + ':00'; // Add seconds if missing
+          }
+          days[dateStr] = { hours: hours, status: 'worked' };
+        }
+      }
+      
+      // Only save if we have some data
+      if (Object.keys(days).length > 0) {
+        agentData[agentName] = { days, reason: '' };
+        imported++;
+      }
+    }
+
+    // Save the data
+    Object.entries(agentData).forEach(([agentName, data]) => {
+      DataManager.saveAgentConnectionHours(agentName, currentYear, monthIndex, weekIndex, data);
+    });
+
+    this.closeConnectionHoursImportModal();
+    
+    if (imported > 0) {
+      alert(`✅ Datos importados para ${imported} agente(s).`);
+      this.loadConnectionHours();
+    } else {
+      alert('❌ No se pudo importar ningún dato. Verifique que:\n- Los agentes existan en el equipo seleccionado\n- El formato sea correcto (Nombre | Lunes | Martes | ... | Domingo)\n- Los datos estén separados por tabulaciones');
+    }
+  },
+
+  loadConnectionHours() {
+    const filterMonthConnectionHours = document.getElementById('filterMonthConnectionHours');
+    const selectedMonth = filterMonthConnectionHours ? filterMonthConnectionHours.value : '';
+    
+    if (!selectedMonth) {
+      const container = document.getElementById('connectionHoursContainer');
+      container.innerHTML = `
+        <div style="text-align: center; padding: 3rem; color: var(--text-muted);">
+          <i class="fas fa-clock" style="font-size: 3rem; opacity: 0.3; margin-bottom: 1rem;"></i>
+          <p>Seleccione un mes para ver las horas de conexión</p>
+        </div>
+      `;
+      return;
+    }
+
+    const currentYear = new Date().getFullYear();
+    const month = parseInt(selectedMonth);
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const monthName = monthNames[month];
+
+    // Get week configuration for this month
+    let weeks = DataManager.getWeekConfig(currentYear, month);
+    if (!weeks || !weeks.length) {
+      weeks = DataManager.ensureWeekConfig(currentYear, month);
+    }
+
+    // Get connection hours data
+    const connectionData = DataManager.getConnectionHoursData(currentYear, month);
+    
+    // Get teams and determine which to show
+    const teams = DataManager.getAllTeams();
+    const isEditor = DataManager.isEditor();
+    const userTeam = DataManager.getUserTeam();
+    const filterTeamConnectionHours = document.getElementById('filterTeamConnectionHours');
+    const selectedTeamFilter = filterTeamConnectionHours ? filterTeamConnectionHours.value : '';
+
+    // Determine which team to show
+    let teamToShow = userTeam;
+    if (isEditor && selectedTeamFilter) {
+      teamToShow = selectedTeamFilter;
+    }
+
+    // Get agents list
+    const allAgents = new Set();
+    
+    // Add team members
+    if (teamToShow) {
+      const team = teams[teamToShow];
+      if (team && team.members) {
+        team.members.forEach(member => {
+          if (member.role !== 'supervisor' && member.role !== 'analista' && member.role !== 'calidad') {
+            allAgents.add(member.name);
+          }
+        });
+      }
+    } else if (isEditor && !selectedTeamFilter) {
+      // Editor with no filter - show all teams
+      Object.values(teams).forEach(team => {
+        if (team.members) {
+          team.members.forEach(member => {
+            if (member.role !== 'supervisor' && member.role !== 'analista') {
+              allAgents.add(member.name);
+            }
+          });
+        }
+      });
+    }
+
+    // Also add agents that have data but might not be in team members list
+    Object.keys(connectionData).forEach(agent => allAgents.add(agent));
+
+    let agentsList = Array.from(allAgents).sort();
+
+    // Filter by team
+    if (teamToShow) {
+      const team = teams[teamToShow];
+      const teamMemberNames = team && team.members 
+        ? team.members.filter(m => m.role !== 'supervisor' && m.role !== 'analista' && m.role !== 'calidad').map(m => m.name) 
+        : [];
+      agentsList = agentsList.filter(agent => teamMemberNames.includes(agent));
+    }
+
+    // Sort by shift
+    agentsList.sort((a, b) => {
+      const shiftA = this.getAgentShift(a, teams);
+      const shiftB = this.getAgentShift(b, teams);
+      return this.getShiftPriority(shiftA) - this.getShiftPriority(shiftB);
+    });
+
+    this.renderConnectionHoursTable(monthName, weeks, connectionData, agentsList, teams, currentYear, month, isEditor);
+  },
+
+  renderConnectionHoursTable(monthName, weeks, connectionData, agentsList, teams, year, month, isEditor) {
+    const container = document.getElementById('connectionHoursContainer');
+    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const shortDayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+    if (agentsList.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 3rem; color: var(--text-muted);">
+          <i class="fas fa-inbox" style="font-size: 3rem; opacity: 0.3; margin-bottom: 1rem;"></i>
+          <p>No hay agentes registrados para ${monthName}</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Helper to format seconds to H:MM:SS
+    const formatTimeHMS = (seconds) => {
+      if (!seconds || seconds <= 0) return '-';
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    };
+
+    // Helper to get dates for a week (Monday to Sunday)
+    const getWeekDates = (startDate, endDate) => {
+      const dates = [];
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const current = new Date(start);
+      
+      while (current <= end) {
+        dates.push(new Date(current));
+        current.setDate(current.getDate() + 1);
+      }
+      return dates;
+    };
+
+    // Build HTML for each week
+    let fullHTML = '';
+    
+    weeks.forEach((week, weekIndex) => {
+      const weekDates = getWeekDates(week.startDate, week.endDate);
+      const startDay = week.startDate.split('-')[2];
+      const startMonth = week.startDate.split('-')[1];
+      const endDay = week.endDate.split('-')[2];
+      const endMonth = week.endDate.split('-')[1];
+      
+      let tableHTML = `
+        <div style="margin-bottom: 2rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; overflow: hidden;">
+          <div style="background: linear-gradient(135deg, #272883, #1e1f6a); color: white; padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center;">
+            <h4 style="margin: 0; font-size: 1rem; font-weight: 700;">
+              <i class="fas fa-calendar-week"></i> Semana ${startDay}/${startMonth} al ${endDay}/${endMonth}
+            </h4>
+            <div style="font-size: 0.85rem; opacity: 0.9;">
+              <span style="margin-right: 1rem;"><i class="fas fa-sun"></i> Normal: 8:00:00</span>
+              <span><i class="fas fa-moon"></i> Madrugada: 6:00:00</span>
+            </div>
+          </div>
+          
+          <div class="table-scroll">
+            <table class="data-table" style="font-size: 0.85rem; margin: 0;">
+              <thead>
+                <tr style="background: #f8fafc;">
+                  <th style="min-width: 150px; position: sticky; left: 0; background: #f8fafc; z-index: 1;">Nombre del Agente</th>
+      `;
+      
+      // Add day headers with dates
+      weekDates.forEach(date => {
+        const dayName = shortDayNames[date.getDay()];
+        const dayNum = String(date.getDate()).padStart(2, '0');
+        const monthNum = String(date.getMonth() + 1).padStart(2, '0');
+        tableHTML += `<th style="text-align: center; min-width: 80px;">${dayName}<br><small style="font-weight: 400; color: var(--text-muted);">${dayNum}/${monthNum}</small></th>`;
+      });
+      
+      // Add summary headers
+      tableHTML += `
+                  <th style="text-align: center; background: rgba(56, 206, 166, 0.1); min-width: 60px;">Días Trabajados</th>
+                  <th style="text-align: center; background: rgba(56, 206, 166, 0.1); min-width: 90px;">Horas Proyectadas</th>
+                  <th style="text-align: center; background: rgba(56, 206, 166, 0.1); min-width: 90px;">Horas Realizadas</th>
+                  <th style="text-align: center; background: rgba(239, 68, 68, 0.1); min-width: 80px;">Horas Pendientes</th>
+                  <th style="text-align: center; background: rgba(16, 185, 129, 0.1); min-width: 80px;">Horas a Favor</th>
+                  <th style="text-align: center; min-width: 100px;">Evidencias</th>
+                </tr>
+              </thead>
+              <tbody>
+      `;
+      
+      // Add rows for each agent
+      agentsList.forEach(agentName => {
+        const agentShift = this.getAgentShift(agentName, teams);
+        const expectedDailyHours = DataManager.getExpectedDailyHours(agentShift);
+        const expectedDailySeconds = expectedDailyHours * 3600;
+        
+        const weekData = connectionData[agentName] && connectionData[agentName][weekIndex];
+        const daysData = weekData && weekData.days ? weekData.days : {};
+        
+        let daysWorked = 0;
+        let totalSeconds = 0;
+        
+        tableHTML += `<tr><td style="position: sticky; left: 0; background: white; z-index: 1;"><strong>${agentName}</strong></td>`;
+        
+        // Add cell for each day
+        weekDates.forEach(date => {
+          const dateStr = date.toISOString().split('T')[0];
+          const dayData = daysData[dateStr];
+          
+          let cellContent = '';
+          let cellStyle = 'text-align: center;';
+          
+          if (dayData) {
+            const status = dayData.status || 'worked';
+            const hours = dayData.hours || '';
+            
+            if (status === 'libre' || hours === 'Libre') {
+              cellContent = '<span style="color: #9ca3af; font-style: italic;">Libre</span>';
+            } else if (status === 'vacaciones' || hours === 'VACACIONES') {
+              cellContent = '<span style="color: #f59e0b; font-weight: 600;">VACACIONES</span>';
+              cellStyle += ' background: rgba(245, 158, 11, 0.1);';
+            } else if (status === 'cambio' || hours === 'CAMBIO') {
+              cellContent = '<span style="color: #8b5cf6; font-weight: 600;">CAMBIO</span>';
+              cellStyle += ' background: rgba(139, 92, 246, 0.1);';
+            } else if (status === 'guardia' || hours === 'GUARDIA') {
+              cellContent = '<span style="color: #06b6d4; font-weight: 600;">GUARDIA</span>';
+              cellStyle += ' background: rgba(6, 182, 212, 0.1);';
+            } else if (hours) {
+              // Parse hours and add to total
+              const seconds = DataManager.parseTimeToSeconds(hours);
+              if (seconds > 0) {
+                daysWorked++;
+                totalSeconds += seconds;
+                
+                // Color code based on expected hours
+                if (seconds >= expectedDailySeconds) {
+                  cellStyle += ' color: #10b981; font-weight: 600;';
+                } else if (seconds >= expectedDailySeconds * 0.9) {
+                  cellStyle += ' color: #f59e0b;';
+                } else {
+                  cellStyle += ' color: #ef4444;';
+                }
+              }
+              cellContent = hours;
+            }
+          } else {
+            cellContent = '<span style="color: #d1d5db;">-</span>';
+          }
+          
+          tableHTML += `<td style="${cellStyle}">${cellContent}</td>`;
+        });
+        
+        // Calculate expected hours based on days worked
+        const expectedSeconds = daysWorked * expectedDailySeconds;
+        const expectedFormatted = formatTimeHMS(expectedSeconds);
+        const actualFormatted = formatTimeHMS(totalSeconds);
+        
+        // Calculate pending and extra hours
+        const diff = totalSeconds - expectedSeconds;
+        let pendingFormatted = '-';
+        let extraFormatted = '-';
+        
+        if (diff < 0) {
+          pendingFormatted = `<span style="color: #ef4444; font-weight: 600;">${formatTimeHMS(Math.abs(diff))}</span>`;
+        } else if (diff > 0) {
+          extraFormatted = `<span style="color: #10b981; font-weight: 600;">${formatTimeHMS(diff)}</span>`;
+        } else if (daysWorked > 0) {
+          pendingFormatted = '0:00:00';
+          extraFormatted = '0:00:00';
+        }
+        
+        // Add summary cells
+        tableHTML += `
+          <td style="text-align: center; background: rgba(56, 206, 166, 0.05); font-weight: 600;">${daysWorked}</td>
+          <td style="text-align: center; background: rgba(56, 206, 166, 0.05);">${expectedFormatted}</td>
+          <td style="text-align: center; background: rgba(56, 206, 166, 0.05); font-weight: 600;">${actualFormatted}</td>
+          <td style="text-align: center; background: rgba(239, 68, 68, 0.05);">${pendingFormatted}</td>
+          <td style="text-align: center; background: rgba(16, 185, 129, 0.05);">${extraFormatted}</td>
+          <td style="text-align: center;">
+            <a href="#" onclick="App.showAgentEvidence('${agentName}', ${year}, ${month}, ${weekIndex}); return false;" style="color: #272883; text-decoration: underline; font-size: 0.8rem;">${agentName}</a>
+          </td>
+        </tr>`;
+      });
+      
+      tableHTML += `</tbody></table></div></div>`;
+      fullHTML += tableHTML;
+    });
+    
+    // Add header
+    container.innerHTML = `
+      <div style="margin-bottom: 1.5rem;">
+        <h3 style="font-size: 1.2rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--text-primary);">
+          <i class="fas fa-clock"></i> Horas de Conexión - ${monthName} ${year}
+        </h3>
+        <p style="font-size: 0.9rem; color: var(--text-muted); margin: 0;">
+          <strong>Regla:</strong> Turno normal = 8h/día, Madrugada = 6h/día
+        </p>
+      </div>
+      ${fullHTML}
+    `;
+  },
+
+  showAgentEvidence(agentName, year, month, weekIndex) {
+    // Show evidence modal or link to Zendesk data
+    alert(`Evidencias de ${agentName} para la semana ${weekIndex + 1}`);
+  },
+
+  updateConnectionReason(input) {
+    const agentName = input.dataset.agent;
+    const year = parseInt(input.dataset.year);
+    const month = parseInt(input.dataset.month);
+    const reason = input.value.trim();
+
+    // Save reason to the first week that has data, or week 0 if none
+    const connectionData = DataManager.getConnectionHoursData(year, month);
+    if (connectionData[agentName]) {
+      const weekIndexes = Object.keys(connectionData[agentName]);
+      if (weekIndexes.length > 0) {
+        DataManager.updateConnectionHoursReason(agentName, year, month, parseInt(weekIndexes[0]), reason);
+      }
+    } else {
+      // Create an entry for week 0 with the reason
+      DataManager.saveAgentConnectionHours(agentName, year, month, 0, {
+        totalSeconds: 0,
+        entries: [],
+        reason: reason
+      });
     }
   }
 };
