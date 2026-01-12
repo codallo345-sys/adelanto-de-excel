@@ -39,7 +39,8 @@ const DataManager = {
     WEEK_CONFIG: 'calidad_week_config',
     AUDIT_VIEWS: 'calidad_audit_views',
     AUDIT_COMMENTS: 'calidad_audit_comments',
-    ACTIVITY_LOG: 'calidad_activity_log'
+    ACTIVITY_LOG: 'calidad_activity_log',
+    CONNECTION_HOURS: 'calidad_connection_hours'
   },
 
   // Remove all persisted app data so every load starts clean
@@ -151,6 +152,10 @@ const DataManager = {
 
     if (!SafeStorage.getItem(this.STORAGE_KEYS.ACTIVITY_LOG)) {
       SafeStorage.setItem(this.STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify([]));
+    }
+
+    if (!SafeStorage.getItem(this.STORAGE_KEYS.CONNECTION_HOURS)) {
+      SafeStorage.setItem(this.STORAGE_KEYS.CONNECTION_HOURS, JSON.stringify({}));
     }
   },
 
@@ -1051,6 +1056,102 @@ const DataManager = {
     allConfigs[key] = weeks;
     SafeStorage.setItem(this.STORAGE_KEYS.WEEK_CONFIG, JSON.stringify(allConfigs));
     return true;
+  },
+
+  // Connection Hours Management
+  // Data structure: { 'year-month': { 'agentName': { weekIndex: { days: { 'YYYY-MM-DD': { hours: 'HH:MM:SS', status: 'worked'|'libre'|'vacaciones'|'cambio'|'guardia' } }, reason } } } }
+  getConnectionHoursData(year, month) {
+    const key = `${year}-${month}`;
+    const allData = JSON.parse(SafeStorage.getItem(this.STORAGE_KEYS.CONNECTION_HOURS) || '{}');
+    return allData[key] || {};
+  },
+
+  saveConnectionHoursData(year, month, data) {
+    const key = `${year}-${month}`;
+    const allData = JSON.parse(SafeStorage.getItem(this.STORAGE_KEYS.CONNECTION_HOURS) || '{}');
+    allData[key] = data;
+    SafeStorage.setItem(this.STORAGE_KEYS.CONNECTION_HOURS, JSON.stringify(allData));
+  },
+
+  // Save connection hours for a single agent in a specific week
+  saveAgentConnectionHours(agentName, year, month, weekIndex, hoursData) {
+    const allData = this.getConnectionHoursData(year, month);
+    if (!allData[agentName]) {
+      allData[agentName] = {};
+    }
+    allData[agentName][weekIndex] = hoursData;
+    this.saveConnectionHoursData(year, month, allData);
+  },
+
+  // Save daily hours for a single agent on a specific date
+  saveAgentDailyHours(agentName, year, month, weekIndex, dateStr, dayData) {
+    const allData = this.getConnectionHoursData(year, month);
+    if (!allData[agentName]) {
+      allData[agentName] = {};
+    }
+    if (!allData[agentName][weekIndex]) {
+      allData[agentName][weekIndex] = { days: {}, reason: '' };
+    }
+    if (!allData[agentName][weekIndex].days) {
+      allData[agentName][weekIndex].days = {};
+    }
+    allData[agentName][weekIndex].days[dateStr] = dayData;
+    this.saveConnectionHoursData(year, month, allData);
+  },
+
+  // Get expected daily hours based on shift type
+  // 8h for normal shifts (AM, PM, Fin de Semana)
+  // 6h for overnight/madrugada shifts
+  getExpectedDailyHours(shift) {
+    const overnightShifts = ['Madrugada Semana Completa', 'Madrugada Entre Semana', 'Madrugada'];
+    if (overnightShifts.includes(shift)) {
+      return 6;
+    }
+    return 8;
+  },
+
+  // Calculate expected weekly hours based on shift
+  // For normal week shifts: 5 days * hours
+  // For weekend shifts: 2 days * hours
+  getExpectedWeeklyHours(shift) {
+    const weekendShifts = ['Fin de Semana AM', 'Fin de Semana PM'];
+    const dailyHours = this.getExpectedDailyHours(shift);
+    
+    if (weekendShifts.includes(shift)) {
+      return dailyHours * 2; // 2 days
+    }
+    return dailyHours * 5; // 5 days
+  },
+
+  // Parse time string (HH:MM:SS or H:MM:SS) to total seconds
+  parseTimeToSeconds(timeStr) {
+    if (!timeStr || timeStr === 'Libre' || timeStr === 'VACACIONES' || timeStr === 'CAMBIO' || timeStr === 'GUARDIA') {
+      return 0;
+    }
+    const parts = timeStr.split(':');
+    if (parts.length !== 3) return 0;
+    const hours = parseInt(parts[0]) || 0;
+    const minutes = parseInt(parts[1]) || 0;
+    const seconds = parseInt(parts[2]) || 0;
+    return hours * 3600 + minutes * 60 + seconds;
+  },
+
+  // Format seconds to HH:MM:SS
+  formatSecondsToTime(totalSeconds) {
+    if (!totalSeconds || totalSeconds <= 0) return '0:00:00';
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  },
+
+  // Update reason for discrepancy
+  updateConnectionHoursReason(agentName, year, month, weekIndex, reason) {
+    const allData = this.getConnectionHoursData(year, month);
+    if (allData[agentName] && allData[agentName][weekIndex]) {
+      allData[agentName][weekIndex].reason = reason;
+      this.saveConnectionHoursData(year, month, allData);
+    }
   }
 };
 
